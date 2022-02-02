@@ -1,7 +1,12 @@
+import functools
+
 import requests
 import logging
+import queue
 from Stores import Stores
 from bs4 import BeautifulSoup
+from requests_html import HTMLSession
+from threading import Thread, Lock
 
 
 class Scrape:
@@ -10,7 +15,7 @@ class Scrape:
     """
     log = logging.getLogger(__name__)
 
-    def __init__(self, product_name: str, product_model: str, categories: list):
+    def __init__(self, product_name: str, product_model: str, categories):
         """
         :param product_name: Name of product to query should be string.
         :param product_model: Model of product to query should be string. Can be empty string.
@@ -25,14 +30,47 @@ class Scrape:
         # replace all spaces with + sign for query purpose
         self.product_query = self.product.replace(' ', '+')
         self.categories = categories
+        self._sectors = ('electronics', 'general', 'board games')
+        self.thread_results = []
         # always append general section since it can contain anything
-        self.categories.append("general")
+        if not self.categories:
+            self.categories = self._sectors
+        else:
+            self.categories.append("general")
 
     store = Stores()
-    _sectors = ('electronics', 'general', 'board games')
     _products = []
+    scrape_queue = queue.Queue()
 
-    def get_product_data(self, data):
+    # def thread_in_queue(func):
+    #     @functools.wraps(func)
+    #     def wrapper(*args):
+    #         queue.put(func(*args))
+    #     return wrapper
+    #
+    # @thread_in_queue
+    def scrape_standard(self, data, key):
+        res = requests.get(data["query_url"] + self.product_query)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        product_title = soup.select(f'{data["title"]}')
+        product_price = soup.select(f'{data["price"]}')
+        product_url = soup.select(f'{data["url"]}')
+
+        self.thread_results.append([product_title, product_price, product_url, key])
+
+    # @thread_in_queue
+    def scrape_javascript(self, data, key):
+        session = HTMLSession()
+        res = session.get(data["query_url"] + self.product_query)
+        res.html.render()
+        soup = BeautifulSoup(res.html.html, 'html.parser')
+        product_title = soup.select(f'{data["title"]}')
+        product_price = soup.select(f'{data["price"]}')
+        product_url = soup.select(f'{data["url"]}')
+
+        self.thread_results.append([product_title, product_price, product_url, key])
+
+    def get_product_data(self, product_title, product_price, product_url):
         """
         Query site for a product. Take title, price and url.
         Iterate over products from query and if title and module are contained in the query result
@@ -45,11 +83,7 @@ class Scrape:
         4. a html tag or class in which the a.href is contained
         :return: List of Maps.
         """
-        res = requests.get(data["query_url"] + self.product_query)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        product_title = soup.select(f'{data["title"]}')
-        product_price = soup.select(f'{data["price"]}')
-        product_url = soup.select(f'{data["url"]}')
+
         product_data = []
 
         for idx, title in enumerate(product_title):
@@ -62,8 +96,8 @@ class Scrape:
                             'price': product_price[idx].getText(),
                             'url': product_url[idx].a.get('href', None)}
                     product_data.append(prod)
-                except (IndexError, ValueError) as err:
-                    self.log.error(f'Failed to take product data err:\n {err}')
+                except (IndexError, ValueError):
+                    pass
         return product_data
 
     @staticmethod
@@ -98,18 +132,37 @@ class Scrape:
         :return: List that contains lists of maps with product data.
         """
         products = []
+        threads = []
+
+        def append_data_to_products(lock, items):
+            lock.acquire()
+
+            lock.release()
+
         for category in self.categories:
-            if category in self._sectors:
+            if category.lower() in self._sectors:
                 for key, value in self.store.get_store(category).items():
+                    if not value['javascript']:
+                        thread = Thread(target=self.scrape_standard, args=(value, key))
+                    else:
+                        thread = Thread(target=self.scrape_standard, args=(value, key))
+                    threads.append(thread)
+                    thread.start()
+                for i in threads:
+                    i.join()
+
+                for i in self.thread_results:
+                    products_title, product_price, product_url, key = i
                     self.log.info(f'Adding products for store: {key}')
-                    prod = self.get_product_data(value)
+                    prod = self.get_product_data(products_title, product_price, product_url)
                     self._fix_product(key, prod)
                     products.append(prod)
+
             else:
-                self.log.warning(f"No such categorie{category}")
+                self.log.warning(f"No such category {category}")
         return products
 
 
-s = Scrape('Guide to Monsters', '', ['board games'])
+s = Scrape('meadow', '', ['board games'])
 for item in s.generate_products_info():
     print(item)
