@@ -1,10 +1,8 @@
-import functools
-
 import requests
 import logging
 from Stores import Stores
 from bs4 import BeautifulSoup
-from requests_html import HTMLSession
+from requests_html import AsyncHTMLSession, HTMLSession
 from threading import Thread, Lock
 
 
@@ -44,12 +42,10 @@ class Scrape:
     def get_html(self, data, key):
         self.htmls[key] = requests.get(data + self.product_query)
 
-    def get_html_js(self, data, key):
-        session = HTMLSession()
-        res = session.get(data + self.product_query)
-        res.html.render()
-        print(res.html)
-        self.htmls[key] = res
+    # def get_html_js(self, data, key):
+    #     session = HTMLSession()
+    #     res = session.get(data + self.product_query)
+    #     self.htmls[key] = res
 
     def scrape_standard(self, data, res_html, key):
         soup = BeautifulSoup(res_html[key].text, 'html.parser')
@@ -59,14 +55,13 @@ class Scrape:
         self.thread_results.append([product_title, product_price, product_url, key])
 
     def scrape_javascript(self, data, res_html, key):
-        res = res_html[key]
+        session = HTMLSession()
+        res = session.get(data['query_url'] + self.product_query)
         res.html.render()
-        print(res)
-        soup = BeautifulSoup(res.html, 'html.parser')
+        soup = BeautifulSoup(res.html.html, 'html.parser')
         product_title = soup.select(f'{data["title"]}')
         product_price = soup.select(f'{data["price"]}')
         product_url = soup.select(f'{data["url"]}')
-
         self.thread_results.append([product_title, product_price, product_url, key])
 
     def get_product_data(self, product_title, product_price, product_url):
@@ -138,25 +133,25 @@ class Scrape:
                 for key, value in self.store.get_store(category).items():
                     if not value['javascript']:
                         thread = Thread(target=self.get_html, args=(value['query_url'], key))
-                    else:
-                        thread = Thread(target=self.get_html_js, args=(value['query_url'], key))
+                        threads.append(thread)
+                        thread.start()
+                    # else:
+                    #     self.get_html_js(value['query_url'], key)
 
-                    threads.append(thread)
-                    thread.start()
                 for i in threads:
                     i.join()
 
-                # for key, value in self.store.get_store(category).items():
-                #     if not value['javascript']:
-                #         self.scrape_standard(value, self.htmls, key)
-                #     else:
-                #         self.scrape_javascript(value, self.htmls, key)
-                # for i in self.thread_results:
-                #     products_title, product_price, product_url, key = i
-                #     self.log.info(f'Adding products for store: {key}')
-                #     prod = self.get_product_data(products_title, product_price, product_url)
-                #     self._fix_product(key, prod)
-                #     products.append(prod)
+                for key, value in self.store.get_store(category).items():
+                    if not value['javascript']:
+                        self.scrape_standard(value, self.htmls, key)
+                    else:
+                        self.scrape_javascript(value, self.htmls, key)
+                for i in self.thread_results:
+                    products_title, product_price, product_url, key = i
+                    self.log.info(f'Adding products for store: {key}')
+                    prod = self.get_product_data(products_title, product_price, product_url)
+                    self._fix_product(key, prod)
+                    products.append(prod)
             else:
                 self.log.warning(f"No such category {category}")
             self.thread_results.clear()

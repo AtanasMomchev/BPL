@@ -14,7 +14,7 @@ class Stores:
 
     _general = {'emag': {'query_url': 'https://www.emag.bg/search/', 'title': '.card-section-mid a',
                          'price': '.product-new-price', 'url': '.card-section-mid h2', 'javascript': False},
-                'ozone': {'query_url': 'https://www.ozone.bg/instantsearchplus/result/?q=BANG!',
+                'ozone': {'query_url': 'https://www.ozone.bg/instantsearchplus/result/?q=',
                           'title': '.isp_product_title', 'price': '.isp_product_price .price-main',
                           'url': '.isp_product_info', 'javascript': True}
                 }
